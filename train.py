@@ -24,46 +24,67 @@ from transformer.Optim import ScheduledOptim
 __author__ = "Yu-Hsiang Huang"
 
 def cal_performance(pred, gold, trg_pad_idx, smoothing=False):
-    ''' Apply label smoothing if needed '''
+    """
+    Apply label smoothing if needed
+    :param pred:模型的预测输出，通常是词汇表大小的 logits
+    :param gold:真实的目标序列（标签），与 pred 对应
+    :param trg_pad_idx:目标序列中填充（padding）词的索引。
+    :param smoothing:是否采用平滑标签
+    :return:返回模型的性能指标
+
+    """
 
     loss = cal_loss(pred, gold, trg_pad_idx, smoothing=smoothing)
 
-    pred = pred.max(1)[1]
-    gold = gold.contiguous().view(-1)
-    non_pad_mask = gold.ne(trg_pad_idx)
-    n_correct = pred.eq(gold).masked_select(non_pad_mask).sum().item()
-    n_word = non_pad_mask.sum().item()
+    pred = pred.max(1)[1]  # 从预测中找出每个时间步最可能词的索引，pred 的形状通常是 [batch_size, seq_len, vocab_size]
+    gold = gold.contiguous().view(-1)  # 展平为一维数组
+    non_pad_mask = gold.ne(trg_pad_idx)  # 创建一个掩码 non_pad_mask，这个掩码标识出所有非填充词的位置（即所有不等于 trg_pad_idx 的位置）。
+    n_correct = pred.eq(gold).masked_select(non_pad_mask).sum().item()  # .eq(gold) 对预测和真实目标进行比较，得到一个布尔数组，表示预测是否正确。选择所有非填充位置的正确预测，然后通过 .sum().item() 计算这些正确预测的总数。
+    n_word = non_pad_mask.sum().item()  # 计算非填充位置的总数
 
     return loss, n_correct, n_word
 
 
 def cal_loss(pred, gold, trg_pad_idx, smoothing=False):
-    ''' Calculate cross entropy loss, apply label smoothing if needed. '''
+    """
+    Calculate cross entropy loss, apply label smoothing if needed.
+    :param pred:预测序列
+    :param gold:真实序列
+    :param trg_pad_idx:预测词的索引
+    :param smoothing:是否采用标签平滑
+    :return:返回模型的损失
+    """
 
     gold = gold.contiguous().view(-1)
 
-    if smoothing:
-        eps = 0.1
-        n_class = pred.size(1)
+    if smoothing:  # 是否启用标签平滑功能
+        eps = 0.1  # 标签平滑的强度
+        n_class = pred.size(1)  # 词汇表的大小，（即种类的数量）
 
-        one_hot = torch.zeros_like(pred).scatter(1, gold.view(-1, 1), 1)
-        one_hot = one_hot * (1 - eps) + (1 - one_hot) * eps / (n_class - 1)
-        log_prb = F.log_softmax(pred, dim=1)
+        one_hot = torch.zeros_like(pred).scatter(1, gold.view(-1, 1), 1)  # 生成一维热编码表示
+        one_hot = one_hot * (1 - eps) + (1 - one_hot) * eps / (n_class - 1)  # 启用标签平滑，
+        log_prb = F.log_softmax(pred, dim=1)  # 计算对数概率，获得对数概率
 
         non_pad_mask = gold.ne(trg_pad_idx)
         loss = -(one_hot * log_prb).sum(dim=1)
-        loss = loss.masked_select(non_pad_mask).sum()  # average later
+        loss = loss.masked_select(non_pad_mask).sum()  # average later  这里是选择了非填充词的损失进行了求和
     else:
-        loss = F.cross_entropy(pred, gold, ignore_index=trg_pad_idx, reduction='sum')
+        loss = F.cross_entropy(pred, gold, ignore_index=trg_pad_idx, reduction='sum')  # 普通的交叉熵损失函数，同样这里选择了非填充词的损失进行求和
     return loss
 
 
 def patch_src(src, pad_idx):
+    """
+    返回转置后的源语言输入序列
+    """
     src = src.transpose(0, 1)
     return src
 
 
 def patch_trg(trg, pad_idx):
+    """
+    返回拆分后的目标语言输入序列和目标标签序列。
+    """
     trg = trg.transpose(0, 1)
     trg, gold = trg[:, :-1], trg[:, 1:].contiguous().view(-1)
     return trg, gold
@@ -103,7 +124,10 @@ def train_epoch(model, training_data, optimizer, opt, device, smoothing):
 
 
 def eval_epoch(model, validation_data, device, opt):
-    ''' Epoch operation in evaluation phase '''
+    ''' Epoch operation in evaluation phase
+
+    :return:平均每个单词的损失，总的预测精确度
+    '''
 
     model.eval()
     total_loss, n_word_total, n_word_correct = 0, 0, 0
@@ -111,10 +135,11 @@ def eval_epoch(model, validation_data, device, opt):
     desc = '  - (Validation) '
     with torch.no_grad():
         for batch in tqdm(validation_data, mininterval=2, desc=desc, leave=False):
+            # 这里会遍历validation_data,并将进度条设置最小更新间隔为2秒，desc是进度条的描述文本，leave表示进度条完成以后不保留在屏幕上
 
             # prepare data
-            src_seq = patch_src(batch.src, opt.src_pad_idx).to(device)
-            trg_seq, gold = map(lambda x: x.to(device), patch_trg(batch.trg, opt.trg_pad_idx))
+            src_seq = patch_src(batch.src, opt.src_pad_idx).to(device)  # 源语言序列
+            trg_seq, gold = map(lambda x: x.to(device), patch_trg(batch.trg, opt.trg_pad_idx))  # 目标语言输入序列和目标语言标签序列，同时这里使用lambda匿名函数将这个patch函数返回的结果转移到device上面
 
             # forward
             pred = model(src_seq, trg_seq)
@@ -122,9 +147,9 @@ def eval_epoch(model, validation_data, device, opt):
                 pred, gold, opt.trg_pad_idx, smoothing=False)
 
             # note keeping
-            n_word_total += n_word
-            n_word_correct += n_correct
-            total_loss += loss.item()
+            n_word_total += n_word  # 总词数数量
+            n_word_correct += n_correct  # 预测正确的单词数量
+            total_loss += loss.item()  # 累加总损失
 
     loss_per_word = total_loss/n_word_total
     accuracy = n_word_correct/n_word_total
@@ -132,7 +157,14 @@ def eval_epoch(model, validation_data, device, opt):
 
 
 def train(model, training_data, validation_data, optimizer, device, opt):
-    ''' Start training '''
+    """
+    :param model:
+    :param training_data:
+    :param validation_data:
+    :param optimizer:
+    :param device:
+    :param opt:其他训练选项或超参数的配置。
+    """
 
     # Use tensorboard to plot curves, e.g. perplexity, accuracy, learning rate
     if opt.use_tb:
