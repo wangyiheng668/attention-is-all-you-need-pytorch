@@ -257,7 +257,7 @@ def main():
     parser.add_argument('-n_layers', type=int, default=6)
     parser.add_argument('-warmup','--n_warmup_steps', type=int, default=4000)
     parser.add_argument('-lr_mul', type=float, default=2.0)
-    parser.add_argument('-seed', type=int, default=None)
+    parser.add_argument('-seed', type=int, default=None,help='random seed')  # 可以增加choices=range(1, 100)来限制用户指定的范围
 
     parser.add_argument('-dropout', type=float, default=0.1)
     parser.add_argument('-embs_share_weight', action='store_true')
@@ -279,10 +279,10 @@ def main():
     # For reproducibility
     if opt.seed is not None:
         torch.manual_seed(opt.seed)
-        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.benchmark = False  # 如果启用了cuda加速，那么会禁用cudnn的自动调整功能，这里是为了能够可重复实验
         # torch.set_deterministic(True)
-        np.random.seed(opt.seed)
-        random.seed(opt.seed)
+        np.random.seed(opt.seed)  # 将numpy的随机种子设置为opt.seed
+        random.seed(opt.seed)  # 将python内置的随机种子设置为opt.seed
 
     if not opt.output_dir:
         print('No experiment result will be saved.')
@@ -301,9 +301,9 @@ def main():
 
     #========= Loading Dataset =========#
 
-    if all((opt.train_path, opt.val_path)):
+    if all((opt.train_path, opt.val_path)):  # 如果训练和验证的数据路径均存在，则去调用BPE文件来准备数据加载器
         training_data, validation_data = prepare_dataloaders_from_bpe_files(opt, device)
-    elif opt.data_pkl:
+    elif opt.data_pkl:  # 否则使用pickle文件
         training_data, validation_data = prepare_dataloaders(opt, device)
     else:
         raise
@@ -335,19 +335,28 @@ def main():
 
 
 def prepare_dataloaders_from_bpe_files(opt, device):
+    """
+    这里是根据BPE文件来准备数据加载器
+    """
     batch_size = opt.batch_size
-    MIN_FREQ = 2
+    MIN_FREQ = 2  # 这里是词频阈值
     if not opt.embs_share_weight:
         raise
 
     data = pickle.load(open(opt.data_pkl, 'rb'))
-    MAX_LEN = data['settings'].max_len
-    field = data['vocab']
+    MAX_LEN = data['settings'].max_len  # settings 中包含了关于数据预处理和模型训练的一些设置，而 max_len 表示了数据预处理中设定的最大句子长度。
+    field = data['vocab']  # vocab 字段通常包含了训练数据中的词汇表信息，包括词汇表中的词汇和它们的索引。
+    # 使用诸如Byte Pair Encoding (BPE) 或其他子词分割方法时，源语言和目标语言可以共享同一个词汇表。这种方法通过将常见的字符序列压缩成一个单元，可以有效地降低词汇表的大小
     fields = (field, field)
 
+
     def filter_examples_with_length(x):
+        """
+        定义过滤器函数，通过最大长度MAX_LEN来过滤源语言和目标语言的长度
+        """
         return len(vars(x)['src']) <= MAX_LEN and len(vars(x)['trg']) <= MAX_LEN
 
+    # 数据加载器
     train = TranslationDataset(
         fields=fields,
         path=opt.train_path, 
@@ -359,9 +368,9 @@ def prepare_dataloaders_from_bpe_files(opt, device):
         exts=('.src', '.trg'),
         filter_pred=filter_examples_with_length)
 
-    opt.max_token_seq_len = MAX_LEN + 2
-    opt.src_pad_idx = opt.trg_pad_idx = field.vocab.stoi[Constants.PAD_WORD]
-    opt.src_vocab_size = opt.trg_vocab_size = len(field.vocab)
+    opt.max_token_seq_len = MAX_LEN + 2  # 最大令牌序列长度
+    opt.src_pad_idx = opt.trg_pad_idx = field.vocab.stoi[Constants.PAD_WORD]  # 填充标记索引
+    opt.src_vocab_size = opt.trg_vocab_size = len(field.vocab)  # 这里是词汇表的大小
 
     train_iterator = BucketIterator(train, batch_size=batch_size, device=device, train=True)
     val_iterator = BucketIterator(val, batch_size=batch_size, device=device)
