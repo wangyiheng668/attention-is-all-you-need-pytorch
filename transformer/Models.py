@@ -12,7 +12,7 @@ def get_pad_mask(seq, pad_idx):
     """
     这个函数的作用是为了屏蔽当前索引的编码位置，即不关注当前的位置
     """
-    return (seq != pad_idx).unsqueeze(-2)  # 这里在倒数第二维上面添加一个维度是为了
+    return (seq != pad_idx).unsqueeze(-2)  # 这里在倒数第二维上面添加一个维度是为了匹配其它数据的需要
 
 
 def get_subsequent_mask(seq):
@@ -20,6 +20,7 @@ def get_subsequent_mask(seq):
     For masking out the subsequent info
     主要作用是为了屏蔽此位置之后的所有信息
     这里的主要作用是根据输入序列的大小创建一个(1, len_s, len_s) 的张量，并将其上三角矩阵的元素（包括对角线元素）设置维1
+    - return: 一个主对角以下元素（包括主对角元素）为Ture，主对角以上元素为false的矩阵
     """
     sz_b, len_s = seq.size()
     subsequent_mask = (1 - torch.triu(
@@ -28,6 +29,9 @@ def get_subsequent_mask(seq):
 
 
 class PositionalEncoding(nn.Module):
+    """
+
+    """
 
     def __init__(self, d_hid, n_position=200):
         super(PositionalEncoding, self).__init__()
@@ -46,14 +50,27 @@ class PositionalEncoding(nn.Module):
         sinusoid_table[:, 0::2] = np.sin(sinusoid_table[:, 0::2])  # dim 2i
         sinusoid_table[:, 1::2] = np.cos(sinusoid_table[:, 1::2])  # dim 2i+1
 
-        return torch.FloatTensor(sinusoid_table).unsqueeze(0)
+        return torch.FloatTensor(sinusoid_table).unsqueeze(0)  # 使用 .clone().detach() 是为了避免在计算图中跟踪位置表的任何修改，保证位置表作为常量存在。
 
     def forward(self, x):
-        return x + self.pos_table[:, :x.size(1)].clone().detach()
+        return x + self.pos_table[:, :x.size(1)].clone().detach()  # pos_table就是计算位置编码的三角公式
 
 
 class Encoder(nn.Module):
-    ''' A encoder model with self attention mechanism. '''
+    """
+    - A encoder model with self attention mechanism.
+    n_src_vocab：源语言词汇表的大小，即源语言的词汇数量。
+    d_word_vec：词向量的维度大小，表示每个单词在词向量空间中的表示维度。
+    n_layers：编码器（encoder）或解码器（decoder）的层数，决定了模型的深度。
+    n_head：注意力头的数量，表示每个多头自注意力机制中的注意力头的个数。
+    d_k 和 d_v：每个注意力头中 key 和 value 的维度大小。
+    d_model：模型的总体维度大小，也就是每个位置输入向量的维度。
+    d_inner：全连接层中间隐藏层的维度大小。
+    pad_idx：用于填充的索引值，在处理变长序列时会用到。
+    dropout：Dropout 概率，用于防止过拟合。
+    n_position：位置编码的最大序列长度，用于表示序列中不同位置的信息。
+    scale_emb：一个布尔值，表示是否对词嵌入进行缩放。
+    """
 
     def __init__(
             self, n_src_vocab, d_word_vec, n_layers, n_head, d_k, d_v,
@@ -61,32 +78,37 @@ class Encoder(nn.Module):
 
         super().__init__()
 
-        self.src_word_emb = nn.Embedding(n_src_vocab, d_word_vec, padding_idx=pad_idx)
-        self.position_enc = PositionalEncoding(d_word_vec, n_position=n_position)
+        self.src_word_emb = nn.Embedding(n_src_vocab, d_word_vec, padding_idx=pad_idx)  # 词向量嵌入
+        self.position_enc = PositionalEncoding(d_word_vec, n_position=n_position)  # 根究词响亮的维度大小和位置编码的最大长度进行位置编码
         self.dropout = nn.Dropout(p=dropout)
         self.layer_stack = nn.ModuleList([
             EncoderLayer(d_model, d_inner, n_head, d_k, d_v, dropout=dropout)
-            for _ in range(n_layers)])
-        self.layer_norm = nn.LayerNorm(d_model, eps=1e-6)
+            for _ in range(n_layers)])  # 这里构建了一个层堆栈，每一层都有一个相同的结构，即有多个encoderlayer，并且可以使这些模块可以像列表一样进行索引，并且每一个层都使用了相同的参数进行初始化
+        self.layer_norm = nn.LayerNorm(d_model, eps=1e-6)  # 这里是初始化层归一化，
         self.scale_emb = scale_emb
         self.d_model = d_model
 
     def forward(self, src_seq, src_mask, return_attns=False):
+        """
+        src_seq：输入的源序列，通常是一个整数张量，表示词的索引。
+        src_mask：用于屏蔽（masking）源序列中无效（如填充或非目标）数据的掩码。
+        return_attns：一个布尔值，决定是否返回每个编码层中的自注意力权重。
+        """
 
         enc_slf_attn_list = []
 
         # -- Forward
-        enc_output = self.src_word_emb(src_seq)
+        enc_output = self.src_word_emb(src_seq)  # 嵌入层输出
         if self.scale_emb:
-            enc_output *= self.d_model ** 0.5
-        enc_output = self.dropout(self.position_enc(enc_output))
-        enc_output = self.layer_norm(enc_output)
+            enc_output *= self.d_model ** 0.5  #这里就是论文中提到的维度缩放的概念，详见论文笔记
+        enc_output = self.dropout(self.position_enc(enc_output))  # 然后对嵌入层进行位置编码
+        enc_output = self.layer_norm(enc_output)  # 对于输出进行层归一化
 
-        for enc_layer in self.layer_stack:
-            enc_output, enc_slf_attn = enc_layer(enc_output, slf_attn_mask=src_mask)
+        for enc_layer in self.layer_stack:  # 对于encodelayer堆栈中的每一个层
+            enc_output, enc_slf_attn = enc_layer(enc_output, slf_attn_mask=src_mask)  # 这里计算了编码后的输出（先嵌入向量然后进行位置编码再送到编码器中），返回的是编码后的输出，以及计算的注意力得分
             enc_slf_attn_list += [enc_slf_attn] if return_attns else []
 
-        if return_attns:
+        if return_attns:  # 这里代表是否返回每个编码层中的自注意力权重
             return enc_output, enc_slf_attn_list
         return enc_output,
 
@@ -247,7 +269,7 @@ class Transformer(nn.Module):
 
         enc_output, *_ = self.encoder(src_seq, src_mask)
         dec_output, *_ = self.decoder(trg_seq, trg_mask, enc_output, src_mask)
-        seq_logit = self.trg_word_prj(dec_output)
+        seq_logit = self.trg_word_prj(dec_output)  # 共享目标语言的嵌入向量给投影层
         if self.scale_prj:
             seq_logit *= self.d_model ** -0.5  # 这里就是缩放因子 根号（d_model）
 
