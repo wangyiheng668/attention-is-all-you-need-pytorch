@@ -200,7 +200,7 @@ class Transformer(nn.Module):
             d_model=512,  # 模型的维度
             d_inner=2048,
             n_layers=6,
-            n_head=8,
+            n_head=8,  # 多头的数量
             d_k=64,
             d_v=64,
             dropout=0.1,
