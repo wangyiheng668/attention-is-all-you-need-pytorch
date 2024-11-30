@@ -79,7 +79,7 @@ class Encoder(nn.Module):
         super().__init__()
 
         self.src_word_emb = nn.Embedding(n_src_vocab, d_word_vec, padding_idx=pad_idx)  # 词向量嵌入
-        self.position_enc = PositionalEncoding(d_word_vec, n_position=n_position)  # 根究词响亮的维度大小和位置编码的最大长度进行位置编码
+        self.position_enc = PositionalEncoding(d_word_vec, n_position=n_position)  # 根据词向量的维度大小和位置编码的最大长度进行位置编码
         self.dropout = nn.Dropout(p=dropout)
         self.layer_stack = nn.ModuleList([
             EncoderLayer(d_model, d_inner, n_head, d_k, d_v, dropout=dropout)
@@ -121,6 +121,8 @@ class Decoder(nn.Module):
             d_model, d_inner, pad_idx, n_position=200, dropout=0.1, scale_emb=False):
 
         super().__init__()
+
+        # n_layers是解码器中的解码层堆叠的次数，也就是原文中NX定义
 
         self.trg_word_emb = nn.Embedding(n_trg_vocab, d_word_vec, padding_idx=pad_idx)
         self.position_enc = PositionalEncoding(d_word_vec, n_position=n_position)
@@ -194,8 +196,8 @@ class Transformer(nn.Module):
             self,
             n_src_vocab,  # 这里是源语言的输入大小：也就是全部待翻译的语言
             n_trg_vocab,  # 这里是指目标语言大小，也就是说对此词之前已经预测出来的词作为输入
-            src_pad_idx,
-            trg_pad_idx,
+            src_pad_idx,  # 编码输入序列和这个数值进行对比，相等则为False
+            trg_pad_idx,  # 目标序列,原理同上
             d_word_vec=512,  # 每个词经过位置嵌入后变成512的维度
             d_model=512,  # 模型的维度
             d_inner=2048,
@@ -263,11 +265,11 @@ class Transformer(nn.Module):
     def forward(self, src_seq, trg_seq):
 
         # 使用函数 get_pad_mask 获取源语言序列的填充掩码。
-        src_mask = get_pad_mask(src_seq, self.src_pad_idx)
+        src_mask = get_pad_mask(src_seq, self.src_pad_idx)  # enc和dec之间的注意力mask
         # get_subsequent_mask 获取的目标语言序列的自回归掩码相结合。自回归掩码的作用是确保在生成目标序列时，模型只能依赖于已经生成的部分内容，而不能依赖于未来的信息
-        trg_mask = get_pad_mask(trg_seq, self.trg_pad_idx) & get_subsequent_mask(trg_seq)
+        trg_mask = get_pad_mask(trg_seq, self.trg_pad_idx) & get_subsequent_mask(trg_seq)  # 解码器自身的注意力，也就是当前层的解码器输入和所有的解码器信息之间的注意力
 
-        enc_output, *_ = self.encoder(src_seq, src_mask)
+        enc_output, *_ = self.encoder(src_seq, src_mask)  # 将目标序列通过编码映射到和最大长度序列的同等编码表示
         dec_output, *_ = self.decoder(trg_seq, trg_mask, enc_output, src_mask)
         seq_logit = self.trg_word_prj(dec_output)  # 共享目标语言的嵌入向量给投影层
         if self.scale_prj:

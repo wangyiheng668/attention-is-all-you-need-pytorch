@@ -369,7 +369,7 @@ def prepare_dataloaders_from_bpe_files(opt, device):
         filter_pred=filter_examples_with_length)
 
     opt.max_token_seq_len = MAX_LEN + 2  # 最大令牌序列长度
-    opt.src_pad_idx = opt.trg_pad_idx = field.vocab.stoi[Constants.PAD_WORD]  # 填充标记索引
+    opt.src_pad_idx = opt.trg_pad_idx = field.vocab.stoi[Constants.PAD_WORD]  # 填充标记索引，也就是将目标序列与最大长度的序列进行对应，多余的部分使用PAD_WORD对应的常量（索引）进行替代
     opt.src_vocab_size = opt.trg_vocab_size = len(field.vocab)  # 这里是词汇表的大小
 
     train_iterator = BucketIterator(train, batch_size=batch_size, device=device, train=True)

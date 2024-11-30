@@ -52,7 +52,7 @@ class MultiHeadAttention(nn.Module):
         if mask is not None:
             mask = mask.unsqueeze(1)   # For head axis broadcasting.
 
-        q, attn = self.attention(q, k, v, mask=mask)  # 返回经过注意力计算后 的查询张量（经过了加权求和），以及注意力权重，表示每个查询对所有键的注意力分配情况
+        q, attn = self.attention(q, k, v, mask=mask)  # 这里的q是atten和v进行相乘以后的结果。返回经过注意力计算后 的查询张量（经过了加权求和），以及注意力权重，表示每个查询对所有键的注意力分配情况，atten和mask的形状相同，其中对于mask为0的位置，atten使用了负无穷进行了填充
 
         # Transpose to move the head dimension back: b x lq x n x dv
         # Combine the last two dimensions to concatenate all the heads together: b x lq x (n*dv)
